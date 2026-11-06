@@ -36,6 +36,7 @@ const cfg = {
   usuario: leer('usuario', 'amigo'),
   color: leer('color', '#00e5ff'),
   voz: leer('voz', ''),
+  claveIA: leer('claveIA', ''),
   institucion: leer('institucion', ''),
   proyecto: leer('proyecto', 'Asistente personal de voz')
 };
@@ -121,6 +122,7 @@ function dibujar(ms) {
   const R = base * (1 + nivel * 1.1);
 
   ctxO.clearRect(0, 0, W, H);
+  if (holo.on) { dibujarHolo(ctxO, x, y, s, nivel, r, g, b); return; }
 
   // Halo de luz
   const halo = ctxO.createRadialGradient(x, y, R * 0.3, x, y, R * 3);
@@ -304,6 +306,7 @@ $('btnMic').addEventListener('click', () => {
 //  PANEL LATERAL
 // ---------------------------------------------------------------------
 function abrirPanel(vista) {
+  if (!vista || !$(vista)) return;
   document.querySelectorAll('.vista').forEach((v) => v.classList.remove('visible'));
   $(vista).classList.add('visible');
   $('panel').classList.add('abierto');
@@ -318,14 +321,14 @@ function cerrarPanel() {
 
 $('cerrarPanel').addEventListener('click', cerrarPanel);
 document.querySelectorAll('#menu button').forEach((b) => {
-  b.addEventListener('click', () => abrirPanel(b.dataset.vista));
+  if (b.dataset.vista) b.addEventListener('click', () => abrirPanel(b.dataset.vista));
 });
 
 // ---------------------------------------------------------------------
 //  PROCESAR ÓRDENES
 // ---------------------------------------------------------------------
 function procesar(textoOriginal, reintento) {
-  if (!reintento) { mostrarTuVoz(textoOriginal); marcarActividad(); }
+  if (!reintento) { mostrarTuVoz(textoOriginal); marcarActividad(); ultimaPregunta = textoOriginal; }
   let t = normalizar(textoOriginal);
   const nom = normalizar(cfg.nombre);
   if (nom) t = t.replace(new RegExp('\\b' + escaparRegex(nom) + '\\b', 'g'), '').replace(/\s+/g, ' ').trim();
@@ -336,6 +339,8 @@ function procesar(textoOriginal, reintento) {
 
   t = humanizar(t);
   if (!t) { hablar('Dime, ' + cfg.usuario + ', te escucho.'); return; }
+
+  if (pcComando(t)) return;
 
   // ---- Presentación y conversación en curso ----
   if (pres.enCurso && controlPresentacion(t)) return;
@@ -455,6 +460,19 @@ function procesar(textoOriginal, reintento) {
   if (/chiste/.test(t)) { contarChiste(); return; }
   if (/\bgracias\b/.test(t)) { hablar('De nada, ' + cfg.usuario + '.'); return; }
   if (esPeticionMatematica(t) && calcularVoz(t)) return;
+
+  // ---- v8: holograma, cámara, búsqueda mundial, carpeta, instalación ----
+  if (comandosHolo(t)) return;
+  if (comandosVision(t)) return;
+  m = t.match(/(?:busca|buscame|investiga|googlea|averigua|consulta|busca)\s+(?:en\s+)?(?:google|internet|la web|el navegador|linea)\s*(?:sobre|de|acerca de|que es|quien es)?\s*(.+)/) || t.match(/^(?:googlea|googlear)\s+(.+)/);
+  if (m) { buscarEnWeb(m[1]); return; }
+  if (/(conecta|conectar|vincula|vincular|elige|selecciona|agrega).*carpeta/.test(t)) { abrirPanel('v-docs'); $('btnCarpeta').classList.add('pulsar'); hablar('Pulsa el botón que brilla, Conectar carpeta, y elige la carpeta de tu computador donde están tus archivos. Después podré abrirlos por voz.'); return; }
+  if (/(instala|instalar|descarga|descargar).*(app|aplicacion|programa|asistente)|como te instalo/.test(t)) { instalarApp(); return; }
+  m = t.match(/(?:abre|abrir|busca|buscame|muestra|muestrame|ensename|trae)\s+(?:(?:el|la|mi|un|una)\s+)*(?:archivo|documento|pdf|word|excel|hoja de calculo|imagen|foto|presentacion)\s+(?:de\s+|llamad[oa]\s+|que se llama\s+)?(.+)/);
+  if (m && !PC.activo) {
+    const enDocs = docs.length ? buscarDocPorNombre(m[1]) : null;
+    if (!enDocs) { abrirArchivoCarpeta(m[1]); return; }
+  }
 
   // ---- Videos, pantalla, Office, documentos (v7) ----
   if (/^(?:siguiente|otro|proximo)\s+video/.test(t)) { siguienteVideo(); return; }
@@ -733,6 +751,7 @@ $('btnAjustes').addEventListener('click', () => {
   $('inColor').value = cfg.color;
   $('inInstitucion').value = cfg.institucion;
   $('inProyecto').value = cfg.proyecto;
+  $('inClaveIA').value = cfg.claveIA;
   cargarVoces();
   $('modal').classList.remove('oculto');
 });
@@ -750,6 +769,8 @@ $('btnGuardar').addEventListener('click', () => {
   cfg.proyecto = $('inProyecto').value.trim() || 'Asistente personal de voz';
   guardar('institucion', cfg.institucion);
   guardar('proyecto', cfg.proyecto);
+  cfg.claveIA = $('inClaveIA').value.trim();
+  guardar('claveIA', cfg.claveIA);
   aplicarConfig();
   $('modal').classList.add('oculto');
   hablar('Ajustes guardados. Soy ' + cfg.nombre + '.');
@@ -1249,6 +1270,9 @@ $('btnPip').addEventListener('click', async () => {
 
 // ----- Panel de comandos y recomendaciones -----
 const GRUPOS_COMANDOS = [
+  { titulo: 'Holograma y cámara', items: ['muestra el holograma', 'tres vistas', 'saluda', 'vuelve a la esfera', 'enciende la cámara', 'qué estoy haciendo', 'cuántos dedos tengo', 'qué objeto tengo en la mano', 'lee esto', 'activa la detección de gestos'] },
+  { titulo: 'Búsqueda mundial y archivos', items: ['quién fue el primer presidente de Estados Unidos', 'busca en google la capital de Japón', 'conecta mi carpeta', 'abre el archivo informe', 'comparte pantalla', 'instala la app'] },
+  { titulo: 'Control del PC (solo versión Windows)', items: ['abre excel', 'abre el archivo tarea de matemáticas', 'sube el volumen', 'toma una captura', 'qué programas tengo abiertos', 'activa el mouse real', 'cierra word', 'bloquea el computador'] },
   { titulo: 'Videos y pantalla', items: ['pon videos de gatos', 'muéstrame videos sobre el espacio', 'siguiente video', 'cierra el video', 'lee la pantalla', 'qué notificaciones tengo', 'vigila las notificaciones', 'pantalla completa'] },
   { titulo: 'Inglés / English', items: ['habla inglés', 'preséntate en inglés', 'cómo se dice buenos días en inglés', 'traduce gracias al inglés', '(en modo inglés) tell me a joke', '(en modo inglés) what is 25 times 4', '(en modo inglés) show me videos about space', '(en modo inglés) speak Spanish'] },
   { titulo: 'Excel, Word y documentos', items: ['abre excel', 'abre word', 'muestra el documento plantas', 'lee el documento', 'abre mis documentos'] },
@@ -2127,6 +2151,7 @@ function manejarPuntero(p, dist) {
   const tx = clamp(((1 - p[8].x) - 0.12) / 0.76) * window.innerWidth;
   const ty = clamp((p[8].y - 0.10) / 0.70) * window.innerHeight;
   const ahora = performance.now();
+  if (PC.activo && PC.mouse) PC.mover(tx / window.innerWidth, ty / window.innerHeight);
   if (!pu.pellizco || pu.arrastre) {
     pintarPuntero(pu.x + (tx - pu.x) * 0.4, pu.y + (ty - pu.y) * 0.4, false);
     pu.hist.push({ t: ahora, x: pu.x, y: pu.y });
@@ -2134,6 +2159,7 @@ function manejarPuntero(p, dist) {
   }
   if (!pu.pellizco && dist < 0.045) {
     pu.pellizco = true;
+    if (PC.activo && PC.mouse) PC.clic('clic');
     const antes = pu.hist.find((h) => ahora - h.t <= 200) || { x: pu.x, y: pu.y };
     pintarPuntero(antes.x, antes.y, false);
     pinchar(antes.x, antes.y);
@@ -2147,8 +2173,9 @@ function manejarPuntero(p, dist) {
 function alResultadoManos(r) {
   const l = $('manos'), c = l.getContext('2d');
   c.clearRect(0, 0, l.width, l.height);
-  if (!r.multiHandLandmarks || !r.multiHandLandmarks.length) { soltar(); if (pu.activo) soltarPuntero(); return; }
+  if (!r.multiHandLandmarks || !r.multiHandLandmarks.length) { visionManos(null); soltar(); if (pu.activo) soltarPuntero(); return; }
   const p = r.multiHandLandmarks[0];
+  visionManos(p);
   if (streamCamara) {
     c.fillStyle = cfg.color;
     p.forEach((pt) => { c.beginPath(); c.arc(pt.x * l.width, pt.y * l.height, 4, 0, Math.PI * 2); c.fill(); });
@@ -3411,6 +3438,11 @@ function decirNumeroEn(v) {
 function presentarEnPantalla() { iniciarPresentacion('todos', 'en'); }
 
 const INTENCIONES_EN = [
+  [/(show|activate|turn on|switch to|enable).*(hologram|avatar|body)/, () => { ponerHolo(true); hablarEn('Here I am, as a hologram. You can say: wave, or: back to the sphere.'); }],
+  [/(turn off|hide|disable|remove|back to).*(hologram|avatar|body|sphere|ball)/, () => { ponerHolo(false); hablarEn('Back to the sphere.'); }],
+  [/^(?:wave|say hello to everyone|greet everyone|wave hello)/, () => { saludarHolo(); hablarEn('Hello everyone, it is a pleasure to be here.'); }],
+  [/(what am i doing|what do you see|describe me|look at me|what can you see)/, () => describirCamara(null, true)],
+  [/(how many fingers)/, () => contarDedos()],
   [/(speak|talk|switch|go back|back) .*(spanish|espanol)|habla espanol|en espanol/, () => { ponerIdioma('es'); hablar('Perfecto, volvemos al español. Te escucho.'); }],
   [/^(?:hello|hi|hey|good (?:morning|afternoon|evening))\b/, () => hablarEn(llenarEn('Hello{u}! I am {n}, your voice assistant. What would you like to do today?'))],
   [/how are you|how is it going|how do you feel/, () => hablarEn('I am doing great, thank you for asking! I am ready to help. How are you?')],
@@ -3553,6 +3585,823 @@ const DIAPOS_EN = [
       await n('Thank you very much for your attention. We learned that with only three programming languages and a lot of practice, we can build a useful and friendly tool. I am ready to answer your questions.');
     } }
 ];
+
+// ---------------------------------------------------------------------
+//  V8: IA / BÚSQUEDA MUNDIAL (Gemini + Google), COMPARTIR PANTALLA GUIADO,
+//      CARPETA DEL PC, INSTALACIÓN COMO APP
+// ---------------------------------------------------------------------
+let ultimaPregunta = '';
+const histIA = [];
+
+// ----- Motor de IA -----
+const MODELOS_GEMINI = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+function sistemaIA(en) {
+  const hoy = new Date().toLocaleDateString(en ? 'en-US' : 'es-ES', { dateStyle: 'full' });
+  const quien = cfg.usuario === 'amigo' ? '' : (en ? ' The user is called ' : ' El usuario se llama ') + cfg.usuario + '.';
+  return (en
+    ? 'You are ' + cfg.nombre + ', a friendly voice assistant. Answer in English in at most three short sentences, with no markdown, lists or symbols, because your answer is read aloud. Be accurate and worldwide in scope. If you are not sure, say so. Today is ' + hoy + '.'
+    : 'Eres ' + cfg.nombre + ', un asistente de voz amable y culto. Responde en español en máximo tres frases cortas, sin markdown, listas ni símbolos, porque tu respuesta se lee en voz alta. Responde con precisión y con alcance mundial, no solo sobre Bolivia. Si no estás seguro, dilo. Hoy es ' + hoy + '.') + quien;
+}
+async function postJSON(url, cuerpo, ms) {
+  const c = new AbortController();
+  const id = setTimeout(() => c.abort(), ms || 20000);
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo), signal: c.signal });
+    const txt = await r.text();
+    let d = null; try { d = JSON.parse(txt); } catch (e) {}
+    if (!r.ok) { const er = new Error('http ' + r.status); er.status = r.status; er.cuerpo = d || txt; throw er; }
+    return d;
+  } finally { clearTimeout(id); }
+}
+async function geminiLlamar(contenidos, en, buscar) {
+  let ultimo = null;
+  for (const modelo of MODELOS_GEMINI) {
+    const cuerpo = { systemInstruction: { parts: [{ text: sistemaIA(en) }] }, contents: contenidos, generationConfig: { temperature: 0.4, maxOutputTokens: 400 } };
+    if (buscar) cuerpo.tools = [{ google_search: {} }];
+    try {
+      return await postJSON('https://generativelanguage.googleapis.com/v1beta/models/' + modelo + ':generateContent?key=' + enc(cfg.claveIA), cuerpo, 25000);
+    } catch (e) {
+      ultimo = e;
+      if (buscar && e.status === 400) { // la búsqueda no está disponible: reintenta sin ella
+        delete cuerpo.tools;
+        try { return await postJSON('https://generativelanguage.googleapis.com/v1beta/models/' + modelo + ':generateContent?key=' + enc(cfg.claveIA), cuerpo, 25000); } catch (e2) { ultimo = e2; }
+      }
+      if (e.status === 401 || e.status === 403) break; // clave inválida
+    }
+  }
+  throw ultimo || new Error('sin respuesta');
+}
+function extraerGemini(d) {
+  const cand = d && d.candidates && d.candidates[0];
+  if (!cand || !cand.content) return null;
+  const texto = (cand.content.parts || []).map((p) => p.text || '').join(' ').replace(/[*#_`]/g, '').replace(/\s+/g, ' ').trim();
+  const fuentes = ((cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || []).map((g) => g.web).filter(Boolean).slice(0, 4).map((w) => ({ titulo: w.title || w.uri, url: w.uri }));
+  return texto ? { texto, fuentes, motor: 'gemini' } : null;
+}
+async function libreLlamar(pregunta, en) {
+  const url = 'https://text.pollinations.ai/' + enc(pregunta) + '?model=openai&system=' + enc(sistemaIA(en));
+  const c = new AbortController(); const id = setTimeout(() => c.abort(), 9000);
+  try {
+    const r = await fetch(url, { signal: c.signal });
+    if (!r.ok) throw new Error('http');
+    const t = (await r.text()).replace(/[*#_`]/g, '').replace(/\s+/g, ' ').trim();
+    if (t.length < 2 || /rate limit|IMPORTANT NOTICE|deprecated/i.test(t)) throw new Error('mala respuesta');
+    return { texto: t, fuentes: [], motor: 'libre' };
+  } finally { clearTimeout(id); }
+}
+function hayIA() { return !!cfg.claveIA || true; }
+async function preguntarIA(pregunta, opt) {
+  opt = opt || {};
+  const en = !!opt.en;
+  if (cfg.claveIA) {
+    const contenidos = histIA.slice(-8).concat([{ role: 'user', parts: [{ text: pregunta }] }]);
+    const d = await geminiLlamar(contenidos, en, opt.buscar !== false);
+    const r = extraerGemini(d);
+    if (!r) throw new Error('vacío');
+    histIA.push({ role: 'user', parts: [{ text: pregunta }] }, { role: 'model', parts: [{ text: r.texto }] });
+    return r;
+  }
+  return await libreLlamar(pregunta, en);
+}
+async function preguntarIAImagen(pregunta, base64, en) {
+  if (cfg.claveIA) {
+    const d = await geminiLlamar([{ role: 'user', parts: [{ text: pregunta }, { inlineData: { mimeType: 'image/jpeg', data: base64 } }] }], en, false);
+    const r = extraerGemini(d);
+    if (!r) throw new Error('vacío');
+    return r;
+  }
+  const d = await postJSON('https://text.pollinations.ai/openai', { model: 'openai', messages: [
+    { role: 'system', content: sistemaIA(en) },
+    { role: 'user', content: [{ type: 'text', text: pregunta }, { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + base64 } }] }] }, 25000);
+  const t = d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
+  if (!t) throw new Error('vacío');
+  return { texto: t.replace(/[*#_`]/g, '').replace(/\s+/g, ' ').trim(), fuentes: [], motor: 'libre' };
+}
+
+function pintarRespuestaIA(q, r, en) {
+  abrirPanel('v-info');
+  const c = $('info');
+  c.innerHTML = '';
+  const h = document.createElement('h3'); h.textContent = q;
+  const p = document.createElement('p'); p.textContent = r.texto;
+  c.appendChild(h); c.appendChild(p);
+  (r.fuentes || []).forEach((f) => {
+    const a = document.createElement('a'); a.href = f.url; a.target = '_blank'; a.rel = 'noopener'; a.className = 'enlace-grande';
+    a.textContent = '🔗 ' + (f.titulo || f.url).slice(0, 70); c.appendChild(a);
+  });
+  const g = document.createElement('a'); g.href = 'https://www.google.com/search?q=' + enc(q); g.target = '_blank'; g.rel = 'noopener'; g.className = 'enlace-grande';
+  g.textContent = en ? '🔎 See more on Google' : '🔎 Ver más en Google'; c.appendChild(g);
+  const nota = document.createElement('div'); nota.className = 'ayuda';
+  nota.textContent = r.motor === 'gemini' ? 'Respuesta de Gemini con búsqueda de Google.' : 'Respuesta de una IA gratuita (sin clave). Para respuestas más precisas, agrega tu clave de Gemini en Ajustes.';
+  c.appendChild(nota);
+}
+
+// Consulta mundial: IA primero, Wikipedia si falla
+async function consultaMundial(pregunta, opt) {
+  opt = opt || {};
+  abrirPanel('v-info');
+  setModo('pensando');
+  $('info').textContent = opt.en ? 'Searching the web...' : 'Buscando en internet...';
+  try {
+    const r = await preguntarIA(pregunta, opt);
+    pintarRespuestaIA(pregunta, r, opt.en);
+    opt.en ? hablarEn(r.texto, pregunta) : hablar(r.texto, pregunta);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+const _investigarWiki = investigar;
+investigar = async function (tema, en) {
+  const orig = ultimaPregunta || tema;
+  const pregunta = /^(?:quien|quienes|que|cual|cuales|cuando|donde|cuanto|cuantos|cuantas|como|por que|porque|para que|who|what|when|where|which|how|why)\b/i.test(normalizar(orig)) || /\?/.test(orig);
+  if (pregunta || cfg.claveIA) {
+    if (await consultaMundial(orig, { en })) return;
+  }
+  if (pregunta && !cfg.claveIA) {
+    // Sin IA: aviso honesto, Wikipedia solo da un resumen del tema
+    window.__avisoWiki = true;
+  }
+  return _investigarWiki(tema, en);
+};
+async function buscarEnWeb(consulta) {
+  ultimaPregunta = consulta;
+  if (await consultaMundial(consulta, {})) return;
+  return _investigarWiki(consulta, false);
+}
+
+// ----- Compartir pantalla guiado -----
+compartirPantalla = async function () {
+  abrirPanel('v-pantalla');
+  $('guiaPantalla').classList.remove('oculto');
+  if (streamPantalla) { hablar('Ya estás compartiendo tu pantalla.'); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    hablar('Este navegador no permite compartir pantalla. Usa Google Chrome o Edge.');
+    return;
+  }
+  try {
+    streamPantalla = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: 'monitor', frameRate: 15 }, audio: false,
+      selfBrowserSurface: 'exclude', surfaceSwitching: 'include', monitorTypeSurfaces: 'include', preferCurrentTab: false
+    });
+    $('videoPantalla').srcObject = streamPantalla;
+    $('avisoPantalla').style.display = 'none';
+    $('btnPantalla').textContent = 'Dejar de compartir';
+    $('btnPantalla').classList.remove('pulsar');
+    $('guiaPantalla').classList.add('oculto');
+    streamPantalla.getVideoTracks()[0].addEventListener('ended', () => detenerPantalla(false));
+    const tipo = (streamPantalla.getVideoTracks()[0].getSettings() || {}).displaySurface;
+    if (tipo === 'browser') hablar('Estás compartiendo una pestaña. Para que yo vea todo tu escritorio, deja de compartir y elige Pantalla completa.');
+    else if (tipo === 'window') hablar('Estás compartiendo una ventana. Si quieres que vea todo, elige Pantalla completa. Ya puedes pedirme que lea la pantalla.');
+    else hablar('Listo, estoy viendo toda tu pantalla. Puedes pedirme que lea la pantalla, o que vigile las notificaciones.');
+  } catch (e) {
+    streamPantalla = null;
+    $('btnPantalla').classList.add('pulsar');
+    if (e && e.name === 'NotAllowedError' && /gesture|activation/i.test(e.message || '')) {
+      hablar('Por seguridad, el navegador exige que el clic lo des tú. Pulsa el botón que brilla, el que dice Compartir pantalla, y en la ventana que aparece elige Pantalla completa.');
+    } else {
+      hablar('No se compartió la pantalla. Pulsa el botón que brilla, elige Pantalla completa en la ventana que aparece y pulsa Compartir.');
+    }
+  }
+};
+
+// ----- Carpeta del equipo (File System Access) -----
+const CARP = { handle: null, indice: [], nombre: '' };
+const idb = {
+  abrir() { return new Promise((res, rej) => { const q = indexedDB.open('asistente', 1); q.onupgradeneeded = () => q.result.createObjectStore('kv'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
+  async get(k) { const db = await this.abrir(); return new Promise((res) => { const r = db.transaction('kv').objectStore('kv').get(k); r.onsuccess = () => res(r.result); r.onerror = () => res(null); }); },
+  async set(k, v) { const db = await this.abrir(); return new Promise((res) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => res(); }); }
+};
+const EXT_IMG = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+async function indexarCarpeta() {
+  CARP.indice = [];
+  const ignorar = /^(node_modules|\.git|AppData|\$RECYCLE\.BIN|System Volume Information)$/i;
+  async function rec(dir, ruta, prof) {
+    for await (const [n, h] of dir.entries()) {
+      if (CARP.indice.length >= 15000) return;
+      if (h.kind === 'file') CARP.indice.push({ n, ruta: ruta + n, h, nn: normalizar(n.replace(/\.\w+$/, '')) });
+      else if (prof < 5 && !ignorar.test(n) && !n.startsWith('.')) { try { await rec(h, ruta + n + '/', prof + 1); } catch (e) {} }
+    }
+  }
+  await rec(CARP.handle, '', 0);
+  $('estadoCarpeta').textContent = '📁 ' + CARP.handle.name + ' conectada · ' + CARP.indice.length + ' archivos';
+}
+async function elegirCarpeta() {
+  if (!window.showDirectoryPicker) { hablar('Este navegador no permite conectar carpetas. Usa Google Chrome o Edge en el computador.'); return; }
+  try {
+    CARP.handle = await window.showDirectoryPicker({ mode: 'read' });
+    CARP.nombre = CARP.handle.name;
+    $('estadoCarpeta').textContent = 'Leyendo la carpeta...';
+    await indexarCarpeta();
+    try { await idb.set('carpeta', CARP.handle); } catch (e) {}
+    hablar('Carpeta ' + CARP.nombre + ' conectada. Tengo ' + CARP.indice.length + ' archivos disponibles. Dime, por ejemplo: abre el archivo informe.');
+  } catch (e) { if (e && e.name !== 'AbortError') hablar('No pude conectar la carpeta.'); }
+}
+async function recuperarCarpeta() {
+  try {
+    const h = await idb.get('carpeta');
+    if (!h) return;
+    CARP.handle = h; CARP.nombre = h.name;
+    const permiso = await h.queryPermission({ mode: 'read' });
+    if (permiso === 'granted') await indexarCarpeta();
+    else $('estadoCarpeta').textContent = '📁 ' + h.name + ' (pulsa "Conectar carpeta" para reactivar el permiso)';
+  } catch (e) {}
+}
+function buscarEnCarpeta(consulta) {
+  const toks = normalizar(consulta).replace(/\b(el|la|los|las|de|del|mi|mis|un|una|archivo|documento|pdf|word|excel|hoja|imagen|foto|presentacion|llamado|llamada|que se llama)\b/g, ' ').split(/\s+/).filter((x) => x.length > 1);
+  if (!toks.length) return [];
+  return CARP.indice.map((f) => ({ f, pts: toks.filter((tk) => f.nn.includes(tk)).length / toks.length - f.nn.length * 0.0005 }))
+    .filter((x) => x.pts >= 0.5).sort((a, b) => b.pts - a.pts).slice(0, 5).map((x) => x.f);
+}
+async function mostrarArchivoCarpeta(item) {
+  abrirPanel('v-docs');
+  const c = $('resultadosDocs'); c.innerHTML = '';
+  const file = await item.h.getFile();
+  const h = document.createElement('h4'); h.textContent = '📄 ' + item.ruta; c.appendChild(h);
+  if (EXT_IMG.test(item.n)) {
+    const img = document.createElement('img'); img.src = URL.createObjectURL(file); img.style.maxWidth = '100%'; c.appendChild(img);
+    hablar('Aquí está la imagen ' + item.n.replace(/\.\w+$/, '') + '.'); return;
+  }
+  if (/\.pdf$/i.test(item.n)) {
+    const f = document.createElement('iframe'); f.src = URL.createObjectURL(file); f.className = 'visor-pdf'; c.appendChild(f);
+    try { agregarDoc(item.n, ((await leerArchivo(file)) || '').trim()); guardarDocs(); pintarDocs(); } catch (e) {}
+    hablar('Abrí el PDF ' + item.n.replace(/\.\w+$/, '') + '. Si quieres, pregúntame algo sobre su contenido.'); return;
+  }
+  try {
+    const texto = ((await leerArchivo(file)) || '').trim();
+    if (!texto) throw new Error('vacío');
+    agregarDoc(item.n, texto); guardarDocs(); pintarDocs();
+    verDoc(docs.find((d) => d.nombre === item.n));
+  } catch (e) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = item.n; a.className = 'enlace-grande';
+    a.textContent = '⬇ Descargar ' + item.n; c.appendChild(a);
+    hablar('No puedo mostrar este tipo de archivo aquí, pero te dejé un botón para descargarlo y abrirlo.');
+  }
+}
+async function abrirArchivoCarpeta(consulta) {
+  if (!CARP.handle) { abrirPanel('v-docs'); $('btnCarpeta').classList.add('pulsar'); hablar('Primero conecta una carpeta de tu computador. Pulsa el botón que brilla, Conectar carpeta, y elige por ejemplo Documentos. Solo lo haces una vez.'); return true; }
+  if (!CARP.indice.length) { try { if ((await CARP.handle.requestPermission({ mode: 'read' })) === 'granted') await indexarCarpeta(); } catch (e) {} }
+  if (!CARP.indice.length) { abrirPanel('v-docs'); hablar('Pulsa Conectar carpeta para darme permiso otra vez.'); return true; }
+  const r = buscarEnCarpeta(consulta);
+  if (!r.length) { hablar('No encontré ningún archivo parecido a ' + consulta + ' en la carpeta ' + CARP.nombre + '.'); return true; }
+  if (r.length > 1 && normalizar(r[0].nn) !== normalizar(consulta)) {
+    const nombres = r.slice(0, 3).map((x) => x.n.replace(/\.\w+$/, '')).join(', ');
+    await mostrarArchivoCarpeta(r[0]);
+    return true;
+  }
+  await mostrarArchivoCarpeta(r[0]);
+  return true;
+}
+$('btnCarpeta').addEventListener('click', () => { $('btnCarpeta').classList.remove('pulsar'); elegirCarpeta(); });
+recuperarCarpeta();
+
+// ----- Instalar como app (PWA) -----
+let eventoInstalar = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); eventoInstalar = e; $('btnInstalar').classList.remove('oculto'); });
+window.addEventListener('appinstalled', () => { $('btnInstalar').classList.add('oculto'); hablar('Aplicación instalada. Ya puedes abrirla desde tu escritorio o el menú de inicio.'); });
+function instalarApp() {
+  if (eventoInstalar) { eventoInstalar.prompt(); eventoInstalar = null; return; }
+  hablar('Para instalarme, abre el menú de tres puntos de Chrome y elige Guardar y compartir, Instalar página como aplicación. También aparece un icono de instalar en la barra de direcciones.');
+}
+$('btnInstalar').addEventListener('click', instalarApp);
+if ('serviceWorker' in navigator && /^https:/.test(location.protocol)) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
+// ---------------------------------------------------------------------
+//  V8: CUERPO HOLOGRÁFICO EN MOVIMIENTO (alterna con la esfera)
+// ---------------------------------------------------------------------
+const holo = { on: false, vistas: false, gira: true, yaw: 0, saludo: 0, saludoHasta: 0, t0: 0, fuerzaSaludo: 0 };
+
+function anillosCilindro(p0, p1, r0, r1, n, seg) {
+  const ax = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+  const L = Math.hypot(ax[0], ax[1], ax[2]) || 1;
+  const a = [ax[0] / L, ax[1] / L, ax[2] / L];
+  let u = Math.abs(a[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  const cross = (p, q) => [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]];
+  let v = cross(a, u); const lv = Math.hypot(v[0], v[1], v[2]); v = v.map((x) => x / lv);
+  u = cross(v, a);
+  const anillos = [];
+  for (let i = 0; i < n; i++) {
+    const k = n === 1 ? 0 : i / (n - 1);
+    const c = [p0[0] + ax[0] * k, p0[1] + ax[1] * k, p0[2] + ax[2] * k];
+    const r = r0 + (r1 - r0) * k;
+    const pts = [];
+    for (let j = 0; j < seg; j++) {
+      const th = (j / seg) * Math.PI * 2;
+      pts.push([c[0] + r * (Math.cos(th) * u[0] + Math.sin(th) * v[0]), c[1] + r * (Math.cos(th) * u[1] + Math.sin(th) * v[1]), c[2] + r * (Math.cos(th) * u[2] + Math.sin(th) * v[2])]);
+    }
+    anillos.push(pts);
+  }
+  return anillos;
+}
+function anillosElipse(secciones, seg) { // [y, rx, rz, cx, cz]
+  return secciones.map(([y, rx, rz, cx, cz]) => {
+    const pts = [];
+    for (let j = 0; j < seg; j++) { const th = (j / seg) * Math.PI * 2; pts.push([(cx || 0) + rx * Math.cos(th), y, (cz || 0) + rz * Math.sin(th)]); }
+    return pts;
+  });
+}
+function anillosEsfera(c, r, n, seg) {
+  const an = [];
+  for (let i = 1; i < n; i++) {
+    const fi = -Math.PI / 2 + (i / n) * Math.PI;
+    const rr = r * Math.cos(fi), y = c[1] + r * 1.18 * Math.sin(fi);
+    const pts = [];
+    for (let j = 0; j < seg; j++) { const th = (j / seg) * Math.PI * 2; pts.push([c[0] + rr * Math.cos(th), y, c[2] + rr * 0.92 * Math.sin(th)]); }
+    an.push(pts);
+  }
+  return an;
+}
+const dirBrazo = (ang, lado) => [lado * Math.sin(ang), -Math.cos(ang), 0];
+const sum = (p, d, l) => [p[0] + d[0] * l, p[1] + d[1] * l, p[2] + d[2] * l];
+
+// Construye el cuerpo (lista de partes, cada una con anillos) según el instante
+function construirCuerpo(s, nivel, saludo) {
+  const resp = 1 + 0.018 * Math.sin(s * 1.6) + nivel * 0.05;
+  const partes = [];
+  const cabeceo = nivel * 0.012 * Math.sin(s * 9);
+  partes.push({ an: anillosEsfera([0, 0.77 + cabeceo, 0.01], 0.108, 9, 14), tipo: 'cabeza' });
+  partes.push({ an: anillosCilindro([0, 0.665, 0], [0, 0.62, 0], 0.042, 0.05, 2, 10), tipo: 'cuello' });
+  partes.push({ an: anillosElipse([
+    [0.60, 0.19 * resp, 0.10 * resp], [0.52, 0.185 * resp, 0.115 * resp], [0.42, 0.155 * resp, 0.105 * resp], [0.32, 0.135 * resp, 0.095 * resp],
+    [0.21, 0.145, 0.10], [0.10, 0.165, 0.11], [0.0, 0.175, 0.115]], 16), tipo: 'torso' });
+  [-1, 1].forEach((lado) => {
+    // piernas
+    const cad = [lado * 0.085, -0.02, 0], rod = [lado * 0.095, -0.45, 0.012], tob = [lado * 0.095, -0.85, 0];
+    partes.push({ an: anillosCilindro(cad, rod, 0.088, 0.058, 8, 12), tipo: 'pierna' });
+    partes.push({ an: anillosCilindro(rod, tob, 0.058, 0.04, 8, 12), tipo: 'pierna' });
+    partes.push({ an: anillosCilindro(tob, [lado * 0.095, -0.885, 0.11], 0.04, 0.032, 4, 8), tipo: 'pie' });
+    // brazos (el derecho de la figura, lado = +1, saluda)
+    const hombro = [lado * 0.205, 0.565, 0];
+    let a1 = 0.16 + 0.03 * Math.sin(s * 1.6 + lado), a2 = 0.10 + 0.03 * Math.sin(s * 1.6 + lado);
+    if (lado === 1) {
+      a1 = a1 + (1.5 - a1) * saludo;
+      a2 = a2 + (2.95 + 0.38 * Math.sin(s * 9) - a2) * saludo;
+    }
+    const codo = sum(hombro, dirBrazo(a1, lado), 0.29);
+    const muneca = sum(codo, dirBrazo(a2, lado), 0.26);
+    const mano = sum(muneca, dirBrazo(a2, lado), 0.09);
+    partes.push({ an: anillosCilindro(hombro, codo, 0.05, 0.04, 6, 10), tipo: 'brazo' });
+    partes.push({ an: anillosCilindro(codo, muneca, 0.04, 0.03, 6, 10), tipo: 'brazo' });
+    partes.push({ an: anillosCilindro(muneca, mano, 0.034, 0.026, 3, 8), tipo: 'mano' });
+  });
+  return partes;
+}
+
+function dibujarCuerpo(c, cx, cy, S, yaw, s, nivel, saludo, rgb, alfa) {
+  const [r, g, b] = rgb;
+  const cs = Math.cos(yaw), sn = Math.sin(yaw);
+  const camara = 3.2;
+  const proy = (p) => {
+    const X = p[0] * cs + p[2] * sn, Z = -p[0] * sn + p[2] * cs;
+    const f = camara / (camara + Z);
+    return [cx + X * S * f, cy - p[1] * S * f, Z];
+  };
+  const barrido = ((s * 0.35) % 1.4) * 1.9 - 0.95; // altura del barrido luminoso
+  const partes = construirCuerpo(s, nivel, saludo);
+  c.lineCap = 'round';
+  partes.forEach((pt) => {
+    const P = pt.an.map((ring) => ring.map(proy));
+    P.forEach((ring, k) => {
+      const yM = pt.an[k][0][1];
+      const brillo = Math.max(0, 1 - Math.abs(yM - barrido) * 7);
+      const zProm = ring.reduce((a, q) => a + q[2], 0) / ring.length;
+      const prof = 0.55 + 0.45 * (1 - (zProm + 0.3) / 0.6);
+      const al = Math.min(1, (0.30 + 0.35 * Math.max(0, Math.min(1, prof)) + brillo * 0.7 + nivel * 0.25) * alfa);
+      c.strokeStyle = brillo > 0.2 ? 'rgba(230,255,255,' + al + ')' : 'rgba(' + r + ',' + g + ',' + b + ',' + al + ')';
+      c.lineWidth = 0.9 + brillo * 1.6;
+      c.beginPath();
+      ring.forEach((q, j) => { j ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); });
+      c.closePath();
+      c.stroke();
+    });
+    // líneas longitudinales entre anillos
+    c.strokeStyle = 'rgba(' + r + ',' + g + ',' + b + ',' + 0.22 * alfa + ')';
+    c.lineWidth = 0.7;
+    c.beginPath();
+    for (let k = 0; k < P.length - 1; k++) {
+      const n = P[k].length, paso = n >= 14 ? 2 : 1;
+      for (let j = 0; j < n; j += paso) { c.moveTo(P[k][j][0], P[k][j][1]); c.lineTo(P[k + 1][j][0], P[k + 1][j][1]); }
+    }
+    c.stroke();
+  });
+}
+
+const holoParticulas = Array.from({ length: 46 }, () => ({ x: Math.random() * 2 - 1, y: Math.random(), z: Math.random(), v: 0.05 + Math.random() * 0.12 }));
+
+function dibujarHolo(c, x, y, s, nivel, r, g, b) {
+  if (!holo.t0) holo.t0 = s;
+  const ahora = performance.now();
+  const objSaludo = ahora < holo.saludoHasta ? 1 : 0;
+  holo.saludo += (objSaludo - holo.saludo) * 0.07;
+  // giro: continuo, o de frente cuando habla
+  if (holo.vistas) holo.yaw = 0;
+  else if (modo === 'hablando' || ahora < holo.saludoHasta) { const dest = Math.round(holo.yaw / (Math.PI * 2)) * Math.PI * 2 + 0.35 * Math.sin(s * 0.9); holo.yaw += (dest - holo.yaw) * 0.06; }
+  else if (holo.gira) holo.yaw += 0.012;
+  const flick = 0.92 + 0.08 * Math.sin(s * 37) * Math.sin(s * 5.3);
+  const glitch = Math.random() < 0.012 ? (Math.random() - 0.5) * 14 : 0;
+  const S = H * 0.285;
+  const cy = y + H * 0.04;
+
+  // resplandor y plataforma
+  const halo = c.createRadialGradient(x, cy, S * 0.1, x, cy, S * 1.5);
+  halo.addColorStop(0, 'rgba(' + r + ',' + g + ',' + b + ',' + (0.16 + nivel * 0.18) + ')');
+  halo.addColorStop(1, 'rgba(' + r + ',' + g + ',' + b + ',0)');
+  c.fillStyle = halo; c.fillRect(x - S * 1.6, cy - S * 1.5, S * 3.2, S * 3);
+  const pie = cy + 0.885 * S;
+  for (let i = 0; i < 4; i++) {
+    const fase = (s * 0.6 + i / 4) % 1;
+    c.strokeStyle = 'rgba(' + r + ',' + g + ',' + b + ',' + (0.55 * (1 - fase)) + ')';
+    c.lineWidth = 1.5;
+    c.beginPath(); c.ellipse(x, pie, S * (0.18 + fase * 0.5), S * (0.045 + fase * 0.12), 0, 0, Math.PI * 2); c.stroke();
+  }
+  // haz de luz hacia arriba
+  const haz = c.createLinearGradient(0, pie, 0, pie - S * 1.9);
+  haz.addColorStop(0, 'rgba(' + r + ',' + g + ',' + b + ',0.12)'); haz.addColorStop(1, 'rgba(' + r + ',' + g + ',' + b + ',0)');
+  c.fillStyle = haz; c.beginPath(); c.moveTo(x - S * 0.4, pie); c.lineTo(x + S * 0.4, pie); c.lineTo(x + S * 0.2, pie - S * 1.9); c.lineTo(x - S * 0.2, pie - S * 1.9); c.fill();
+
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  c.shadowColor = cfg.color; c.shadowBlur = 8 + nivel * 18;
+  if (holo.vistas) {
+    const k = 0.78;
+    dibujarCuerpo(c, x - S * 0.95 + glitch, cy, S * k, Math.PI / 2, s, nivel, 0, [r, g, b], 0.8 * flick);
+    dibujarCuerpo(c, x + S * 0.95 + glitch, cy, S * k, -Math.PI / 2, s, nivel, 0, [r, g, b], 0.8 * flick);
+    dibujarCuerpo(c, x + glitch, cy, S, 0, s, nivel, holo.saludo, [r, g, b], flick);
+  } else {
+    dibujarCuerpo(c, x + glitch, cy, S, holo.yaw, s, nivel, holo.saludo, [r, g, b], flick);
+  }
+  c.restore();
+
+  // partículas que suben
+  c.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',0.8)';
+  holoParticulas.forEach((p) => {
+    p.y -= p.v * 0.016; if (p.y < 0) { p.y = 1; p.x = Math.random() * 2 - 1; }
+    c.globalAlpha = Math.min(1, p.y) * 0.6;
+    c.fillRect(x + p.x * S * 0.7, pie - p.y * S * 1.8, 1.6, 1.6);
+  });
+  c.globalAlpha = 1;
+  // líneas de escaneo
+  c.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',0.045)';
+  for (let yy = cy - S * 1.0; yy < pie; yy += 5) c.fillRect(x - S * 1.2, yy, S * 2.4, 1);
+}
+
+function ponerHolo(on, vistas) {
+  holo.on = !!on; holo.vistas = !!vistas;
+  $('btnHolo').classList.toggle('activo', holo.on);
+  if (on) holo.saludoHasta = performance.now() + 3500;
+}
+function saludarHolo() { if (!holo.on) ponerHolo(true); holo.saludoHasta = performance.now() + 3500; }
+$('btnHolo').addEventListener('click', () => { ponerHolo(!holo.on); hablar(holo.on ? 'Holograma activado.' : 'Volví a la esfera.'); });
+
+function comandosHolo(t) {
+  if (/(holograma|cuerpo|avatar|humano)/.test(t) && /(muestra|muestrame|activa|enciende|pon|ponme|quiero ver|modo|dame|aparece|haz)/.test(t) && !/(quita|apaga|oculta|desactiva)/.test(t)) {
+    const v = /(tres vistas|3 vistas|frente y perfil|perfiles|vistas)/.test(t);
+    ponerHolo(true, v);
+    hablar(v ? 'Holograma con tres vistas: frente y los dos perfiles.' : 'Aquí estoy, en forma de holograma. Puedes decirme saluda, tres vistas, o vuelve a la esfera.');
+    return true;
+  }
+  if (/(quita|apaga|oculta|desactiva|cierra|sal del).*(holograma|cuerpo|avatar)|(vuelve|volver|regresa|regresar|pon).*(esfera|pelota|bolita)|(esfera|pelota|bolita)$/.test(t)) {
+    ponerHolo(false); hablar('Listo, volví a la esfera.'); return true;
+  }
+  if (holo.on && /(tres vistas|3 vistas|frente y perfil|todas las vistas)/.test(t)) { holo.vistas = true; hablar('Tres vistas activadas.'); return true; }
+  if (holo.on && /(una vista|vista normal|solo una vista|vista unica)/.test(t)) { holo.vistas = false; hablar('Una sola vista.'); return true; }
+  if (/\bsaluda(?:me|nos)?\b|\bsaludo\b|hazme un saludo|\bhola a todos\b/.test(t) && !/(como estas)/.test(t)) {
+    saludarHolo(); hablar('Hola a todos, es un gusto estar aquí.'); return true;
+  }
+  if (holo.on && /(deja de girar|no gires|quieto|detente|para de girar|congela)/.test(t)) { holo.gira = false; hablar('Me quedo quieto.'); return true; }
+  if (holo.on && /(gira|girar|da vueltas|rota)/.test(t)) { holo.gira = true; hablar('Girando.'); return true; }
+  return false;
+}
+
+// ---------------------------------------------------------------------
+//  V8: VISIÓN POR CÁMARA (qué haces, dedos, objetos, texto) + GESTOS
+// ---------------------------------------------------------------------
+const vision = { gesto: '', ultimoAvisado: '', estable: 0, avisar: false, dedos: 0, xs: [], coco: null, cargandoCoco: false };
+
+function fotoCamara(maxAncho) {
+  const v = $('video');
+  if (!streamCamara || !v.videoWidth) return null;
+  const k = Math.min(1, (maxAncho || 640) / v.videoWidth);
+  const c = document.createElement('canvas');
+  c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+  c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+  return c;
+}
+async function asegurarCamara() {
+  if (streamCamara && $('video').videoWidth) return true;
+  if (!streamCamara) { try { await encenderCamara(); } catch (e) {} }
+  for (let i = 0; i < 20 && !(streamCamara && $('video').videoWidth); i++) await new Promise((r) => setTimeout(r, 200));
+  return !!(streamCamara && $('video').videoWidth);
+}
+
+// ----- Clasificación de gestos con los 21 puntos de la mano -----
+function dedosExtendidos(p) {
+  const arriba = (punta, pip) => p[punta].y < p[pip].y - 0.015;
+  const pulgar = Math.hypot(p[4].x - p[17].x, p[4].y - p[17].y) > Math.hypot(p[3].x - p[17].x, p[3].y - p[17].y) * 1.08 && Math.hypot(p[4].x - p[5].x, p[4].y - p[5].y) > 0.07;
+  return { pulgar, indice: arriba(8, 6), medio: arriba(12, 10), anular: arriba(16, 14), menique: arriba(20, 18) };
+}
+function clasificarGesto(p, hist) {
+  const d = dedosExtendidos(p);
+  const n = [d.indice, d.medio, d.anular, d.menique].filter(Boolean).length + (d.pulgar ? 1 : 0);
+  vision.dedos = n;
+  const cerrados = !d.indice && !d.medio && !d.anular && !d.menique;
+  if (cerrados && d.pulgar && p[4].y < p[3].y && p[4].y < p[5].y) return 'pulgar arriba';
+  if (cerrados && !d.pulgar) return 'puño cerrado';
+  if (d.indice && d.medio && !d.anular && !d.menique) return 'símbolo de paz';
+  if (d.indice && !d.medio && !d.anular && !d.menique) return 'señalando con el índice';
+  if (n >= 4) {
+    // ¿saluda? la muñeca/palma oscila en horizontal
+    hist.push(p[9].x); while (hist.length > 18) hist.shift();
+    const mn = Math.min(...hist), mx = Math.max(...hist);
+    let cruces = 0; const med = (mn + mx) / 2;
+    for (let i = 1; i < hist.length; i++) if ((hist[i - 1] - med) * (hist[i] - med) < 0) cruces++;
+    if (hist.length >= 12 && mx - mn > 0.07 && cruces >= 3) return 'saludando';
+    return 'mano abierta';
+  }
+  return n + ' dedos levantados';
+}
+// Se llama desde alResultadoManos con la mano detectada (o null)
+function visionManos(p) {
+  if (!p) { vision.gesto = ''; vision.estable = 0; vision.xs.length = 0; return; }
+  const g = clasificarGesto(p, vision.xs);
+  if (g === vision.gesto) vision.estable++; else { vision.gesto = g; vision.estable = 1; }
+  if (vision.avisar && vision.estable === (g === 'mano abierta' ? 16 : 8) && g !== vision.ultimoAvisado && !hablando) {
+    vision.ultimoAvisado = g;
+    const frases = { 'saludando': 'Veo que me estás saludando. ¡Hola!', 'pulgar arriba': 'Un pulgar arriba. Me alegra que te guste.', 'símbolo de paz': 'Haces el símbolo de paz.', 'puño cerrado': 'Tienes el puño cerrado.', 'mano abierta': 'Muestras la mano abierta.', 'señalando con el índice': 'Estás señalando con el índice.' };
+    hablar(frases[g] || ('Veo ' + g + '.'));
+    if (g === 'saludando') saludarHolo();
+  }
+}
+
+// ----- Objetos con COCO-SSD (sin clave) -----
+const NOMBRES_COCO = { person: 'una persona', cellphone: 'un celular', 'cell phone': 'un celular', laptop: 'una laptop', book: 'un libro', cup: 'una taza', bottle: 'una botella', keyboard: 'un teclado', mouse: 'un mouse', tv: 'una pantalla', chair: 'una silla', scissors: 'unas tijeras', clock: 'un reloj', backpack: 'una mochila', 'teddy bear': 'un peluche', apple: 'una manzana', banana: 'un plátano', orange: 'una naranja', remote: 'un control remoto', 'wine glass': 'una copa', fork: 'un tenedor', knife: 'un cuchillo', spoon: 'una cuchara', bowl: 'un tazón', cat: 'un gato', dog: 'un perro', pen: 'un lápiz' };
+async function cargarCoco() {
+  if (vision.coco) return vision.coco;
+  await cargarScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
+  await cargarScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
+  vision.coco = await window.cocoSsd.load();
+  return vision.coco;
+}
+async function objetosEnCamara() {
+  const c = fotoCamara(640);
+  const modelo = await cargarCoco();
+  return (await modelo.detect(c)).filter((o) => o.score > 0.5);
+}
+function listaNatural(items) {
+  if (!items.length) return '';
+  if (items.length === 1) return items[0];
+  return items.slice(0, -1).join(', ') + ' y ' + items[items.length - 1];
+}
+
+// ----- Órdenes de cámara -----
+async function describirCamara(pregunta, en) {
+  if (!(await asegurarCamara())) { hablar('No pude encender la cámara. Revisa el permiso del navegador y vuelve a intentarlo.'); return; }
+  abrirPanel('v-camara');
+  setModo('pensando');
+  hablar(en ? 'Let me look.' : 'Déjame mirarte un momento.', en ? 'Looking...' : 'Mirando...');
+  const c = fotoCamara(640);
+  const b64 = c.toDataURL('image/jpeg', 0.7).split(',')[1];
+  try {
+    const p = pregunta || (en
+      ? 'Describe in one or two sentences what the person in this image is doing, their posture and any visible objects. Speak directly to them ("You are...").'
+      : 'Describe en una o dos frases qué está haciendo la persona de la imagen, su postura, su expresión y los objetos que se ven. Háblale directamente de tú ("Estás...").');
+    const r = await preguntarIAImagen(p, b64, en);
+    en ? hablarEn(r.texto) : hablar(r.texto);
+    return;
+  } catch (e) {}
+  // Respaldo local: gestos + objetos
+  try {
+    let partes = [];
+    const obj = await objetosEnCamara();
+    const personas = obj.filter((o) => o.class === 'person').length;
+    const otros = [...new Set(obj.filter((o) => o.class !== 'person').map((o) => NOMBRES_COCO[o.class] || o.class))];
+    if (personas) partes.push(personas === 1 ? 'Te veo a ti' : 'Veo ' + personas + ' personas');
+    if (vision.gesto) partes.push('estás ' + (vision.gesto === 'saludando' ? 'saludando' : 'mostrando ' + vision.gesto));
+    if (otros.length) partes.push('y hay ' + listaNatural(otros) + ' cerca');
+    hablar(partes.length ? partes.join(', ') + '.' : 'No logro ver a nadie. Acércate un poco a la cámara.');
+  } catch (e) {
+    hablar('No pude analizar la imagen. Necesito internet para cargar el modelo de visión.');
+  }
+}
+async function contarDedos() {
+  if (!(await asegurarCamara())) { hablar('Primero necesito encender la cámara.'); return; }
+  abrirPanel('v-camara');
+  if (!rastreo.activo) { const ok = await iniciarRastreo(); if (!ok) { hablar('No pude cargar el detector de manos. Necesita internet.'); return; } }
+  hablar('Muéstrame tu mano frente a la cámara.');
+  for (let i = 0; i < 25; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    if (vision.gesto && vision.estable >= 6) { hablar('Veo ' + vision.dedos + (vision.dedos === 1 ? ' dedo levantado.' : ' dedos levantados.') + ' Es ' + vision.gesto + '.'); return; }
+  }
+  hablar('No veo tu mano. Acércala un poco y ábrela hacia la cámara.');
+}
+async function objetosCamara() {
+  if (!(await asegurarCamara())) { hablar('Primero necesito encender la cámara.'); return; }
+  abrirPanel('v-camara'); setModo('pensando');
+  hablar('Mirando lo que hay frente a la cámara.');
+  try {
+    const obj = await objetosEnCamara();
+    const nombres = [...new Set(obj.map((o) => NOMBRES_COCO[o.class] || o.class))];
+    hablar(nombres.length ? 'Veo ' + listaNatural(nombres) + '.' : 'No reconozco ningún objeto claro. Acércalo más a la cámara.');
+  } catch (e) { hablar('No pude cargar el modelo de objetos. Necesita internet.'); }
+}
+async function contarPersonas() {
+  if (!(await asegurarCamara())) { hablar('Primero necesito encender la cámara.'); return; }
+  abrirPanel('v-camara'); setModo('pensando');
+  try {
+    const n = (await objetosEnCamara()).filter((o) => o.class === 'person').length;
+    hablar(n === 0 ? 'No veo a nadie en la cámara.' : n === 1 ? 'Veo una persona.' : 'Veo ' + n + ' personas.');
+  } catch (e) { hablar('No pude cargar el modelo de visión. Necesita internet.'); }
+}
+async function leerCamara() {
+  if (!(await asegurarCamara())) { hablar('Primero necesito encender la cámara.'); return; }
+  abrirPanel('v-camara'); setModo('pensando');
+  hablar('Leyendo lo que muestras a la cámara.');
+  try {
+    const c = fotoCamara(1280);
+    const txt = limpiarOCR(await ocrDe(c));
+    hablar(txt ? 'Leo: ' + txt.slice(0, 400) : 'No logro leer texto. Acerca el papel y que haya buena luz.');
+  } catch (e) { hablar('No pude cargar el lector de texto. Necesita internet.'); }
+}
+async function activarGestos(on) {
+  vision.avisar = on;
+  if (on) {
+    if (!(await asegurarCamara())) { hablar('Necesito la cámara para ver tus gestos.'); vision.avisar = false; return; }
+    if (!rastreo.activo) { const ok = await iniciarRastreo(); if (!ok) { hablar('No pude cargar el detector de manos. Necesita internet.'); vision.avisar = false; return; } }
+    vision.ultimoAvisado = '';
+    hablar('Listo. Te aviso cuando salude, levante el pulgar o haga un gesto.');
+  } else hablar('Dejé de avisar los gestos.');
+}
+
+function comandosVision(t) {
+  if (/(que|q)\s+(estoy\s+haciendo|hago)\b|(dime|describe|descríbeme|describeme|cuentame).*(que\s+hago|lo\s+que\s+hago|lo\s+que\s+ves|que\s+ves|como\s+me\s+ves)|\bque\s+ves\b|\bme\s+ves\b|\bmirame\b|\bobservame\b|\bdescribeme\b/.test(t)) { describirCamara(); return true; }
+  if (/cuantos\s+dedos/.test(t)) { contarDedos(); return true; }
+  if (/cuantas\s+personas|cuanta\s+gente/.test(t)) { contarPersonas(); return true; }
+  if (/(que\s+(objeto|cosa)|que\s+tengo\s+en\s+(la\s+)?mano|que\s+sostengo|que\s+te\s+muestro)/.test(t)) { objetosCamara(); return true; }
+  if (/(lee|leeme).*(esto|aqui|papel|texto|lo\s+que\s+(tengo|sostengo|te\s+muestro)|hoja|libro)/.test(t) && streamCamara) { leerCamara(); return true; }
+  if (/(activa|enciende|empieza|comienza|inicia).*(deteccion de gestos|gestos|reconocer gestos)|avisame.*(gestos|cuando salude)/.test(t)) { activarGestos(true); return true; }
+  if (/(desactiva|apaga|deja de|para de|detén|deten).*(gestos)/.test(t)) { activarGestos(false); return true; }
+  return false;
+}
+
+// ---------------------------------------------------------------------
+//  V8: MODO PC (solo cuando la página la sirve servidor.py en tu Windows)
+// ---------------------------------------------------------------------
+const PC = { activo: false, caps: {}, mouse: false, pendiente: null, ultMouse: 0, avisos: true };
+
+async function pcApi(ruta, cuerpo) {
+  const r = await fetch(ruta, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Asistente': window.__PC_TOKEN || '' }, body: JSON.stringify(cuerpo || {}) });
+  if (!r.ok) throw new Error('http ' + r.status);
+  return r.json();
+}
+async function pcDetectar() {
+  if (!window.__PC_TOKEN || /PC_TOKEN/.test(window.__PC_TOKEN)) return;
+  try {
+    const d = await pcApi('/api/ping');
+    if (!d || !d.ok) return;
+    PC.activo = true; PC.caps = d.caps || {};
+    $('version').textContent += ' · PC conectado';
+    document.body.classList.add('modo-pc');
+    setInterval(pcEventos, 1500);
+    const q = new URLSearchParams(location.search);
+    if (q.get('inicio') === 'palmas') pcDespertar(true);
+  } catch (e) {}
+}
+function pcDespertar(deAplausos) {
+  if (!escuchando) { try { iniciarReconocimiento(); } catch (e) {} }
+  marcarActividad();
+  if (deAplausos) {
+    const hora = new Date().getHours();
+    const saludo = hora < 12 ? 'Buenos días' : hora < 19 ? 'Buenas tardes' : 'Buenas noches';
+    hablar(saludo + (cfg.usuario === 'amigo' ? '' : ', ' + cfg.usuario) + '. Escuché tus aplausos. Soy ' + cfg.nombre + ' y estoy lista. ¿Qué hacemos?');
+  }
+}
+async function pcEventos() {
+  try {
+    const d = await pcApi('/api/eventos', { visible: !document.hidden });
+    (d.eventos || []).forEach(pcManejarEvento);
+  } catch (e) {}
+}
+function pcManejarEvento(ev) {
+  if (ev.tipo === 'palmas') { pcDespertar(true); return; }
+  if (!PC.avisos) return;
+  if (ev.tipo === 'mensajes') hablar('Tienes ' + (ev.delta > 1 ? ev.delta + ' mensajes nuevos' : 'un mensaje nuevo') + ' en ' + ev.app + (ev.detalle ? '. Dice: ' + ev.detalle : '') + '.');
+  else if (ev.tipo === 'notificacion') hablar('Notificación de ' + ev.app + (ev.titulo ? ': ' + ev.titulo : '') + (ev.texto ? '. ' + ev.texto : '') + '.');
+  else if (ev.tipo === 'video') hablar('Estás viendo en ' + ev.plataforma + ': ' + ev.titulo + '.');
+  else if (ev.tipo === 'musica') hablar('Está sonando en ' + ev.plataforma + ': ' + ev.titulo + '.');
+}
+
+// ----- Mouse real controlado con la mano -----
+PC.mover = function (fx, fy) {
+  const t = performance.now();
+  if (t - PC.ultMouse < 35) return;
+  PC.ultMouse = t;
+  pcApi('/api/mouse', { accion: 'mover', x: fx, y: fy }).catch(() => {});
+};
+PC.clic = function (tipo) { pcApi('/api/mouse', { accion: tipo || 'clic' }).catch(() => {}); };
+
+// ----- Órdenes -----
+const CONFIRMAR = /^(?:si|sí|claro|dale|confirmo|confirmado|hazlo|adelante|ok|okay|de acuerdo)\b/;
+async function pcOrden(ruta, cuerpo, ok) {
+  try {
+    const d = await pcApi(ruta, cuerpo);
+    if (d.ok) hablar(typeof ok === 'function' ? ok(d) : ok);
+    else hablar(d.mensaje || 'No pude hacerlo.');
+    return d;
+  } catch (e) { hablar('No pude comunicarme con el programa del computador. Revisa que Iniciar.bat siga abierto.'); return null; }
+}
+const NUM_PALABRAS = { uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, diez: 10, veinte: 20, treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60, setenta: 70, ochenta: 80, noventa: 90, cien: 100 };
+function numeroEn(t) { const m = t.match(/(\d+)/); if (m) return +m[1]; for (const k in NUM_PALABRAS) if (new RegExp('\\b' + k + '\\b').test(t)) return NUM_PALABRAS[k]; return null; }
+
+function pcComando(t) {
+  if (!PC.activo) return false;
+  let m;
+  if (PC.pendiente && CONFIRMAR.test(t)) { const f = PC.pendiente; PC.pendiente = null; f(); return true; }
+  if (PC.pendiente && /^(no|cancela|cancelar|mejor no|olvidalo)/.test(t)) { PC.pendiente = null; hablar('Cancelado.'); return true; }
+
+  if (/(cancela|cancelar|anula).*(apagado|apagar|reinicio|reiniciar)/.test(t)) { pcOrden('/api/sistema', { accion: 'cancelar' }, 'Cancelé el apagado.'); return true; }
+  if (/(apaga|apagar).*(computador|computadora|equipo|pc|laptop|ordenador)|(reinicia|reiniciar).*(computador|computadora|equipo|pc|laptop|ordenador)/.test(t)) {
+    const rein = /reinici/.test(t);
+    hablar('¿Seguro que quieres ' + (rein ? 'reiniciar' : 'apagar') + ' el computador? Di sí para confirmar.');
+    PC.pendiente = () => pcOrden('/api/sistema', { accion: rein ? 'reiniciar' : 'apagar' }, 'Se ' + (rein ? 'reiniciará' : 'apagará') + ' en 30 segundos. Di cancela el apagado para detenerlo.');
+    return true;
+  }
+  if (/(bloquea|bloquear).*(pantalla|computador|computadora|equipo|sesion|pc)|^bloquea$/.test(t)) { pcOrden('/api/sistema', { accion: 'bloquear' }, 'Bloqueando el equipo.'); return true; }
+  if (/(suspende|suspender|pon a dormir|hiberna)/.test(t) && /(computador|computadora|equipo|pc|laptop)/.test(t)) { pcOrden('/api/sistema', { accion: 'suspender' }, 'Suspendiendo el equipo.'); return true; }
+
+  if (/(captura|pantallazo|screenshot|foto de la pantalla)/.test(t)) { pcOrden('/api/captura', {}, (d) => 'Captura guardada en ' + d.carpeta + '.'); return true; }
+  if (/(sube|aumenta|mas)\s+(?:el\s+)?(?:volumen|sonido)|volumen\s+(?:mas\s+)?alto/.test(t)) { pcOrden('/api/volumen', { accion: 'subir', pasos: Math.round((numeroEn(t) || 10) / 2) }, 'Subí el volumen.'); return true; }
+  if (/(baja|disminuye|menos)\s+(?:el\s+)?(?:volumen|sonido)|volumen\s+(?:mas\s+)?bajo/.test(t)) { pcOrden('/api/volumen', { accion: 'bajar', pasos: Math.round((numeroEn(t) || 10) / 2) }, 'Bajé el volumen.'); return true; }
+  if (/(silencia|mutea|quita el sonido|sin sonido|silenciar)/.test(t)) { pcOrden('/api/volumen', { accion: 'silenciar' }, 'Sonido silenciado.'); return true; }
+  if (/(pon|ajusta|sube|baja).*volumen.*(?:al|a)\s+(\d+)/.test(t)) { const n = numeroEn(t.split('volumen')[1] || t); pcOrden('/api/volumen', { accion: 'nivel', nivel: n }, 'Volumen al ' + n + ' por ciento.'); return true; }
+  if (/(que|cuanta|como).*(bateria|cpu|procesador|memoria|\bram\b|disco|espacio)|estado del (equipo|sistema|computador)|informacion del (equipo|sistema)/.test(t)) {
+    pcOrden('/api/sistema', { accion: 'info' }, (d) => d.texto); return true;
+  }
+  if (/(que|cuales).*(programas|ventanas|aplicaciones|apps).*(abiertos|abiertas|tengo|hay)|programas abiertos|ventanas abiertas/.test(t)) {
+    pcOrden('/api/ventanas', { accion: 'listar' }, (d) => d.lista.length ? 'Tienes abiertos: ' + d.lista.slice(0, 8).join(', ') + '.' : 'No veo ventanas abiertas.'); return true;
+  }
+
+  // mouse y teclado
+  if (/(activa|enciende|usa|pon|modo).*(mouse real|raton real|mouse del computador|control del mouse|puntero real|mouse con la mano|mouse con mi mano|mouse con los dedos)|controla el mouse con (?:mi|la) mano/.test(t)) {
+    PC.mouse = true;
+    if (!pu.activo) activarPuntero(true);
+    hablar('Control real del mouse activado. Mueve tu dedo índice frente a la cámara, y junta el pulgar con el índice para hacer clic. Di desactiva el mouse real para terminar.');
+    return true;
+  }
+  if (/(desactiva|apaga|quita|deja de usar).*(mouse real|raton real|control del mouse|puntero real)/.test(t)) { PC.mouse = false; if (pu.activo) activarPuntero(false); else hablar('Mouse real desactivado.'); return true; }
+  if (/\bdoble clic\b|\bdoble click\b/.test(t)) { PC.clic('doble'); hablar('Doble clic.'); return true; }
+  if (/clic derecho|click derecho/.test(t)) { PC.clic('derecho'); hablar('Clic derecho.'); return true; }
+  if (/^(?:haz|da|hacer|dame)?\s*(?:un\s+)?(?:clic|click)$/.test(t) && PC.activo) { PC.clic('clic'); hablar('Clic.'); return true; }
+  m = t.match(/mueve el (?:mouse|raton|cursor) (?:hacia )?(arriba|abajo|izquierda|derecha)(?: (\d+))?/);
+  if (m) { pcApi('/api/mouse', { accion: 'relativo', dir: m[1], px: +(m[2] || 150) }).catch(() => {}); hablar('Listo.'); return true; }
+  m = t.match(/^(?:escribe|teclea|digita)\s+(.+)/);
+  if (m) { pcOrden('/api/teclado', { accion: 'escribir', texto: textoOriginalPC(m[1]) }, 'Escrito.'); return true; }
+  m = t.match(/^(?:presiona|pulsa|oprime|aprieta)\s+(?:la tecla\s+)?(enter|intro|escape|esc|tabulador|tab|espacio|borrar|suprimir|flecha arriba|flecha abajo|flecha izquierda|flecha derecha|windows|f5|f11)\b/);
+  if (m) { pcOrden('/api/teclado', { accion: 'tecla', tecla: m[1] }, 'Hecho.'); return true; }
+  const ATAJOS = [[/^(?:copia|copiar)$/, 'copiar'], [/^(?:pega|pegar)$/, 'pegar'], [/^(?:corta|cortar)$/, 'cortar'], [/^(?:guarda|guardar)$/, 'guardar'], [/^(?:deshaz|deshacer)$/, 'deshacer'], [/^(?:selecciona todo|seleccionar todo)$/, 'todo'],
+    [/(minimiza|minimizar) todo|muestra el escritorio|ve al escritorio/, 'escritorio'], [/(cambia|cambiar|pasa) de (ventana|programa)|siguiente ventana/, 'alttab'], [/cierra (esta|la) ventana|cerrar (esta|la) ventana/, 'cerrarventana'], [/(nueva pestana)/, 'nuevapestana'], [/(cierra|cerrar) (esta|la) pestana/, 'cerrarpestana'], [/(maximiza|maximizar) (esta|la)? ?ventana/, 'maximizar']];
+  for (const [re, a] of ATAJOS) if (re.test(t)) { pcOrden('/api/teclado', { accion: 'atajo', atajo: a }, 'Hecho.'); return true; }
+  m = t.match(/^(?:baja|desplaza hacia abajo|scroll abajo)$/); if (m) { pcApi('/api/mouse', { accion: 'scroll', cantidad: -600 }); return true; }
+  m = t.match(/^(?:sube|desplaza hacia arriba|scroll arriba)$/); if (m) { pcApi('/api/mouse', { accion: 'scroll', cantidad: 600 }); return true; }
+
+  // cerrar / enfocar
+  m = t.match(/^(?:cierra|cerrar|termina)\s+(?:el|la|los|las)?\s*(.+)/);
+  if (m && !/(video|panel|ventana flotante|todo|todos|presentacion|camara|pantalla|modelo|programas)/.test(m[1])) { pcOrden('/api/ventanas', { accion: 'cerrar', nombre: m[1].trim(), excluir: cfg.nombre }, (d) => 'Cerré ' + d.cerradas + (d.cerradas === 1 ? ' ventana' : ' ventanas') + ' de ' + m[1].trim() + '.'); return true; }
+  m = t.match(/^(?:ve a|cambia a|trae|muestra|enfoca|pasa a)\s+(?:el|la)?\s*(?:ventana de\s+)?(.+)/);
+  if (m && /(ventana|programa)/.test(t) || (m && /^(excel|word|chrome|spotify|whatsapp|teams|vscode|visual studio code|explorador|powerpoint)$/.test(m[1].trim()))) { pcOrden('/api/ventanas', { accion: 'enfocar', nombre: m[1].replace(/^ventana de\s+/, '').trim() }, 'Aquí está.'); return true; }
+
+  // abrir carpetas, archivos y programas
+  m = t.match(/(?:abre|abrir|ve a|muestra|muestrame)\s+(?:(?:el|la|mi|mis|los|las)\s+)*(escritorio|descargas|documentos|imagenes|fotos|musica|videos|carpeta de descargas|carpeta de documentos)\b/);
+  if (m && !/(archivo|documento)\s+\w/.test(t)) { pcOrden('/api/carpeta', { nombre: m[1] }, 'Abrí ' + m[1] + '.'); return true; }
+  m = t.match(/(?:abre|abrir|busca|buscame|ensename|muestra|muestrame|encuentra|trae|lee|leeme)\s+(?:(?:el|la|mi|un|una)\s+)*(?:(?:archivo|documento|pdf|word|excel|hoja de calculo|presentacion|powerpoint|foto|imagen|carpeta|video|cancion)\s+(?:de\s+|llamad[oa]\s+|que se llama\s+)?)(.+)/);
+  if (m) {
+    pcBuscarYAbrir(m[1].trim(), /(carpeta)/.test(t), /^(?:lee|leeme)\b/.test(t));
+    return true;
+  }
+  m = t.match(/^(?:abre|abrir|ejecuta|inicia|lanza|arranca|enciende)\s+(?:(?:el|la|los|las|mi|un|una)\s+)*(.+)/);
+  if (m) {
+    const n = m[1].trim();
+    if (/^(youtube|google|wikipedia|gmail|maps|mapas|github|drive|traductor|panel|camara|modelo|casa|programas|documentos|comandos|videos)$/.test(n)) return false; // lo maneja el resto
+    if (/^(notas|calculadora|reloj|temporizador|casa|3d)$/.test(n)) return false;
+    pcOrden('/api/abrir', { nombre: n }, (d) => 'Abriendo ' + (d.nombre || n) + '.');
+    return true;
+  }
+  return false;
+}
+const textoOriginalPC = (x) => x; // el servidor decide cómo escribir (acentos incluidos)
+async function pcBuscarYAbrir(consulta, soloCarpeta, leer) {
+  hablar('Buscando ' + consulta + ' en tu computador.');
+  try {
+    const d = await pcApi('/api/archivo', { consulta, carpeta: soloCarpeta, abrir: !leer });
+    if (!d.ok) { hablar(d.mensaje || 'No encontré nada parecido a ' + consulta + '.'); return; }
+    const nom = d.abierto.replace(/\.\w+$/, '');
+    if (leer && d.texto) { agregarDoc(d.abierto, d.texto); pintarDocs(); verDoc(docs.find((x) => x.nombre === d.abierto)); return; }
+    const otros = (d.otros || []).slice(0, 2).map((x) => x.replace(/\.\w+$/, ''));
+    hablar('Abrí ' + nom + '.' + (otros.length ? ' También encontré ' + otros.join(' y ') + ', por si querías otro.' : ''));
+  } catch (e) { hablar('No pude buscar archivos. Revisa que el programa del computador siga abierto.'); }
+}
+pcDetectar();
 
 aplicarConfig();
 cargarVoces();

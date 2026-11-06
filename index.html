@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Asistente</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#04121c">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
 </head>
 <body>
   <div id="errorPantalla"></div>
@@ -13,7 +17,7 @@
   <div id="capaVentanas"></div>
   <div id="puntero"><div class="aro"></div><div class="punto"></div></div>
   <video id="videoRastreo" autoplay muted playsinline></video>
-  <div id="version">versión 7</div>
+  <div id="version">versión 8</div>
 
   <div id="nombre">JARVIS</div>
   <div id="estado">En espera</div>
@@ -37,6 +41,8 @@
     <button id="btnPresentar">🎤 Presentación</button>
     <button data-vista="v-videos">▶ Videos</button>
     <button id="btnFull">⛶ Pantalla completa</button>
+    <button id="btnHolo">🧍 Holograma</button>
+    <button id="btnInstalar" class="oculto">⬇ Instalar app</button>
   </div>
 
   <div id="barra">
@@ -75,6 +81,12 @@
         <video id="videoPantalla" autoplay playsinline muted></video>
         <div id="avisoPantalla">Aquí aparecerá tu escritorio o la ventana que compartas.</div>
       </div>
+      <ol id="guiaPantalla" class="guia">
+        <li>Pulsa el botón <b>Compartir pantalla</b> (el que brilla).</li>
+        <li>En la ventana que aparece, entra a la pestaña <b>Pantalla completa</b> (o <b>Ventana</b>).</li>
+        <li>Haz clic sobre la imagen de tu pantalla y pulsa <b>Compartir</b>.</li>
+        <li>Para terminar di: “deja de compartir pantalla”.</li>
+      </ol>
       <div class="fila">
         <button id="btnPantalla">Compartir pantalla</button>
         <button id="btnCapturaPantalla">Captura</button>
@@ -96,6 +108,8 @@
         <input id="archivosDocs" type="file" multiple accept=".txt,.md,.csv,.json,.html,.htm,.pdf,.docx,.xlsx,.xls,.ods" hidden>
         <button id="btnLimpiarDocs">Borrar todos</button>
       </div>
+      <div class="fila"><button id="btnCarpeta">📁 Conectar carpeta de mi computador</button></div>
+      <div id="estadoCarpeta" class="ayuda">Conecta una carpeta (por ejemplo Documentos) y podré abrir sus archivos por voz: “abre el archivo informe”.</div>
       <div id="accionesOffice"></div>
       <div id="estadoDocs" class="ayuda"></div>
       <div id="listaDocs"></div>
@@ -139,6 +153,8 @@
       <input id="inInstitucion" type="text" maxlength="60" placeholder="Ej: Colegio San Martín">
       <label>Nombre del proyecto</label>
       <input id="inProyecto" type="text" maxlength="60" placeholder="Ej: Asistente personal de voz">
+      <label>Clave de Gemini (opcional, gratis) — respuestas precisas de todo el mundo</label>
+      <input id="inClaveIA" type="password" placeholder="Pega tu clave de aistudio.google.com/apikey" autocomplete="off">
       <label>Color</label>
       <input id="inColor" type="color" value="#00e5ff">
       <label>Voz</label>
@@ -163,6 +179,7 @@
     </div>
   </div>
 
+  <script>window.__PC_TOKEN = "__PC_TOKEN__";</script>
   <script src="script.js"></script>
 </body>
 </html>
